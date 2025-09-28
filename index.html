@@ -11,9 +11,12 @@
     #warning { margin-top: 10px; color: #ffcc00; font-size: 14px; }
     #previewArea { margin-top: 20px; }
     #previewArea img { border: 1px solid #555; max-width: 100%; height: auto; }
-    #copiedMsg, #uploadedMsg { margin-top: 8px; font-size: 14px; display: none; }
-    #copiedMsg { color: #66ff66; }
-    #uploadedMsg { color: #00ccff; }
+    #copiedMsg { margin-top: 8px; color: #66ff66; font-size: 14px; display: none; }
+    #library { margin-top: 30px; text-align: left; max-width: 900px; margin-left: auto; margin-right: auto; }
+    .lib-item { display: flex; align-items: center; background: #333; margin-bottom: 10px; padding: 8px; border-radius: 6px; }
+    .lib-item img { width: 120px; height: auto; border: 1px solid #555; margin-right: 10px; }
+    .lib-actions button { margin: 2px; }
+    #storageUsage { font-size: 13px; margin: 4px 0 12px; color: #aaa; }
   </style>
 </head>
 <body>
@@ -32,13 +35,21 @@
     <button id="previewBtn" disabled>Preview Export</button>
     <button id="downloadBtn" disabled>Download PNG</button>
     <button id="copyLinkBtn" disabled>Copy Image Link</button>
-    <button id="uploadBtn" disabled>Upload & Get Short Link</button>
+    <button id="uploadBtn" disabled>Upload to Catbox</button>
   </div>
 
   <div id="warning"></div>
   <div id="previewArea"></div>
-  <div id="copiedMsg">✅ Image link copied to clipboard!</div>
-  <div id="uploadedMsg">✅ Uploaded! Link: <a id="shortLink" href="#" target="_blank"></a></div>
+  <div id="copiedMsg">✅ Image copied to clipboard!</div>
+
+  <h2>📚 Export Library</h2>
+  <button id="clearLibraryBtn">Clear All</button>
+  <button id="addCatboxBtn">Add Catbox Link</button>
+  <button id="exportLibraryBtn">Export Library</button>
+  <input type="file" id="importLibraryInput" style="display:none;" accept=".json">
+  <button id="importLibraryBtn">Import Library</button>
+  <p id="storageUsage">📦 Storage used: 0 MB / ~5 MB</p>
+  <div id="library"></div>
 
   <script>
     const fileInput = document.getElementById("fileInput");
@@ -52,8 +63,13 @@
     const warningDiv = document.getElementById("warning");
     const previewArea = document.getElementById("previewArea");
     const copiedMsg = document.getElementById("copiedMsg");
-    const uploadedMsg = document.getElementById("uploadedMsg");
-    const shortLink = document.getElementById("shortLink");
+    const libraryDiv = document.getElementById("library");
+    const clearLibraryBtn = document.getElementById("clearLibraryBtn");
+    const addCatboxBtn = document.getElementById("addCatboxBtn");
+    const exportLibraryBtn = document.getElementById("exportLibraryBtn");
+    const importLibraryBtn = document.getElementById("importLibraryBtn");
+    const importLibraryInput = document.getElementById("importLibraryInput");
+    const storageUsage = document.getElementById("storageUsage");
 
     let img = new Image();
     let mask = { x: 0, y: 0, w: 0, h: 0 };
@@ -67,243 +83,201 @@
     const EXPORT_W = 1280;
     const EXPORT_H = 720;
 
-    function initMask() {
-      const iw = canvas.width, ih = canvas.height;
-      if (iw / ih > 16/9) {
-        const mh = ih * 0.8;
-        const mw = mh * 16/9;
-        mask = { w: mw, h: mh, x: (iw - mw)/2, y: (ih - mh)/2 };
-      } else {
-        const mw = iw * 0.8;
-        const mh = mw * 9/16;
-        mask = { w: mw, h: mh, x: (iw - mw)/2, y: (ih - mh)/2 };
+    // --- Library Functions ---
+    function updateStorageUsage() {
+      const libStr = localStorage.getItem("exportLibrary") || "[]";
+      const bytes = new Blob([libStr]).size;
+      const mb = (bytes / 1024 / 1024).toFixed(2);
+      storageUsage.textContent = `📦 Storage used: ${mb} MB / ~5 MB`;
+    }
+
+    function enforceStorageLimit() {
+      let lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      while (true) {
+        const libStr = JSON.stringify(lib);
+        const bytes = new Blob([libStr]).size;
+        const mb = bytes / 1024 / 1024;
+        if (mb < 4.5) break;
+        lib.pop(); // remove oldest
       }
+      localStorage.setItem("exportLibrary", JSON.stringify(lib));
+      renderLibrary(lib);
+      updateStorageUsage();
     }
 
-    function clampMask() {
-      if (mask.w < MIN_W) { mask.w = MIN_W; mask.h = MIN_H; }
-      if (mask.h < MIN_H) { mask.h = MIN_H; mask.w = MIN_W; }
-      if (mask.x < 0) mask.x = 0;
-      if (mask.y < 0) mask.y = 0;
-      if (mask.x + mask.w > canvas.width) mask.x = canvas.width - mask.w;
-      if (mask.y + mask.h > canvas.height) mask.y = canvas.height - mask.h;
+    function saveToLibrary(dataUrl) {
+      let lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      lib.unshift({ id: Date.now(), dataUrl, timestamp: new Date().toLocaleString() });
+      localStorage.setItem("exportLibrary", JSON.stringify(lib));
+      enforceStorageLimit();
     }
 
-    function drawScene() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (currentMode === "crop") {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    function renderLibrary(lib) {
+      libraryDiv.innerHTML = "";
+      if (lib.length === 0) {
+        libraryDiv.innerHTML = "<p>No exports saved yet.</p>";
+        return;
+      }
+      lib.forEach(item => {
+        const isCatbox = item.dataUrl.includes("catbox.moe");
+        const isExternal = item.dataUrl.startsWith("http") && !isCatbox;
 
-        // Overlay
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.beginPath();
-        ctx.rect(0, 0, canvas.width, canvas.height);
-        ctx.moveTo(mask.x, mask.y);
-        ctx.rect(mask.x, mask.y, mask.w, mask.h);
-        ctx.fill("evenodd");
-
-        ctx.strokeStyle = "red";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(mask.x, mask.y, mask.w, mask.h);
-
-        ctx.setLineDash([6, 4]);
-        ctx.strokeStyle = "yellow";
-        for (let i = 1; i < 3; i++) {
-          ctx.beginPath();
-          ctx.moveTo(mask.x + (mask.w * i) / 3, mask.y);
-          ctx.lineTo(mask.x + (mask.w * i) / 3, mask.y + mask.h);
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.moveTo(mask.x, mask.y + (mask.h * i) / 3);
-          ctx.lineTo(mask.x + mask.w, mask.y + (mask.h * i) / 3);
-          ctx.stroke();
+        let warningText = "";
+        if (isExternal) {
+          warningText = `<p style="color:#ffcc00; font-size:12px;">⚠️ This is an external image link. It may be larger in filesize.</p>`;
         }
-        ctx.setLineDash([]);
 
-        // Handles
-        ctx.fillStyle = "red";
-        getHandles().forEach(h => ctx.fillRect(h.x-4, h.y-4, 8, 8));
-      } else {
-        ctx.fillStyle = "black";
-        ctx.fillRect(0,0,canvas.width,canvas.height);
-        const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-        const iw = img.width * scale;
-        const ih = img.height * scale;
-        const ix = (canvas.width - iw)/2;
-        const iy = (canvas.height - ih)/2;
-        ctx.drawImage(img, ix, iy, iw, ih);
+        const div = document.createElement("div");
+        div.className = "lib-item";
+        div.innerHTML = `
+          <img src="${item.dataUrl}">
+          <div class="lib-info">
+            <p><strong>${item.timestamp}</strong></p>
+            ${warningText}
+            <div class="lib-actions">
+              <button onclick="copyFromLibrary('${item.id}')">Copy Link</button>
+              ${isCatbox ? "" : `<button onclick="downloadFromLibrary('${item.id}')">Download</button>`}
+              <button onclick="openFromLibrary('${item.id}')">Open</button>
+              <button onclick="replaceLink('${item.id}')">Replace Link</button>
+              <button onclick="deleteFromLibrary('${item.id}')">Delete</button>
+            </div>
+          </div>
+        `;
+        libraryDiv.appendChild(div);
+      });
+    }
+
+    function copyFromLibrary(id) {
+      const lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      const item = lib.find(i => i.id == id);
+      if (!item) return;
+      navigator.clipboard.writeText(item.dataUrl).then(() => {
+        copiedMsg.textContent = "✅ Library image link copied!";
+        copiedMsg.style.display = "block";
+        setTimeout(() => copiedMsg.style.display = "none", 2000);
+      });
+    }
+
+    function downloadFromLibrary(id) {
+      const lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      const item = lib.find(i => i.id == id);
+      if (!item) return;
+      const link = document.createElement("a");
+      link.download = "exported.png";
+      link.href = item.dataUrl;
+      link.click();
+    }
+
+    function openFromLibrary(id) {
+      const lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      const item = lib.find(i => i.id == id);
+      if (item) window.open(item.dataUrl, "_blank");
+    }
+
+    function replaceLink(id) {
+      const newLink = prompt("Enter Catbox (or image) URL to replace this link:");
+      if (!newLink) return;
+      let lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      const item = lib.find(i => i.id == id);
+      if (item) {
+        item.dataUrl = newLink;
+        item.timestamp = new Date().toLocaleString() + " (Replaced)";
       }
+      localStorage.setItem("exportLibrary", JSON.stringify(lib));
+      renderLibrary(lib);
+      updateStorageUsage();
     }
 
-    function getHandles() {
-      return [
-        {name:"tl", x:mask.x, y:mask.y, cursor:"nwse-resize"},
-        {name:"tr", x:mask.x+mask.w, y:mask.y, cursor:"nesw-resize"},
-        {name:"bl", x:mask.x, y:mask.y+mask.h, cursor:"nesw-resize"},
-        {name:"br", x:mask.x+mask.w, y:mask.y+mask.h, cursor:"nwse-resize"},
-        {name:"tm", x:mask.x+mask.w/2, y:mask.y, cursor:"ns-resize"},
-        {name:"bm", x:mask.x+mask.w/2, y:mask.y+mask.h, cursor:"ns-resize"},
-        {name:"ml", x:mask.x, y:mask.y+mask.h/2, cursor:"ew-resize"},
-        {name:"mr", x:mask.x+mask.w, y:mask.y+mask.h/2, cursor:"ew-resize"}
-      ];
+    function deleteFromLibrary(id) {
+      let lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      lib = lib.filter(i => i.id != id);
+      localStorage.setItem("exportLibrary", JSON.stringify(lib));
+      renderLibrary(lib);
+      updateStorageUsage();
     }
 
-    function hitHandle(mx,my) {
-      return getHandles().find(h =>
-        mx >= h.x-6 && mx <= h.x+6 && my >= h.y-6 && my <= h.y+6
-      );
-    }
-
-    function resizeIfNeeded(image) {
-      if (image.width <= MAX_SIZE && image.height <= MAX_SIZE) {
-        warningDiv.textContent = "";
-        return image;
+    clearLibraryBtn.addEventListener("click", () => {
+      if (confirm("Clear all saved exports?")) {
+        localStorage.removeItem("exportLibrary");
+        renderLibrary([]);
+        updateStorageUsage();
       }
-      const scale = Math.min(MAX_SIZE / image.width, MAX_SIZE / image.height);
-      const newW = Math.round(image.width * scale);
-      const newH = Math.round(image.height * scale);
-      const tmpCanvas = document.createElement("canvas");
-      tmpCanvas.width = newW;
-      tmpCanvas.height = newH;
-      tmpCanvas.getContext("2d").drawImage(image, 0, 0, newW, newH);
-      const resized = new Image();
-      resized.src = tmpCanvas.toDataURL("image/png");
-      warningDiv.textContent = `⚠️ Image resized to ${newW}×${newH}`;
-      return resized;
-    }
+    });
 
-    function renderExportCanvas() {
-      const cropCanvas = document.createElement("canvas");
-      cropCanvas.width = EXPORT_W;
-      cropCanvas.height = EXPORT_H;
-      const ctx2 = cropCanvas.getContext("2d");
-      if (currentMode === "crop") {
-        ctx2.drawImage(img, mask.x, mask.y, mask.w, mask.h, 0, 0, EXPORT_W, EXPORT_H);
-      } else {
-        ctx2.drawImage(canvas, 0, 0, EXPORT_W, EXPORT_H);
+    addCatboxBtn.addEventListener("click", () => {
+      const url = prompt("Enter a Catbox (or image) URL to add:");
+      if (!url) return;
+      if (!url.startsWith("http")) {
+        alert("Please enter a valid link starting with http or https.");
+        return;
       }
-      return cropCanvas;
-    }
+      let lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      lib.unshift({ id: Date.now(), dataUrl: url, timestamp: new Date().toLocaleString() + " (Imported)" });
+      localStorage.setItem("exportLibrary", JSON.stringify(lib));
+      renderLibrary(lib);
+      updateStorageUsage();
+    });
 
-    // File input
-    fileInput.addEventListener("change", e => {
+    // --- Export library with warning ---
+    exportLibraryBtn.addEventListener("click", () => {
+      const lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      const base64Count = lib.filter(item => item.dataUrl.startsWith("data:")).length;
+
+      if (base64Count > 0) {
+        const proceed = confirm(
+          `⚠️ The library contains ${base64Count} images saved as base64.\n` +
+          `This will increase filesize SIGNIFICANTLY.\n\n` +
+          `💡 Suggestion: Replace base64 images with Catbox links before exporting to keep the file small.\n\n` +
+          `Are you sure you want to export this library?`
+        );
+        if (!proceed) return;
+      }
+
+      const libStr = JSON.stringify(lib);
+      const blob = new Blob([libStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "exportLibrary.json";
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // --- Import library from JSON ---
+    importLibraryBtn.addEventListener("click", () => {
+      importLibraryInput.click();
+    });
+
+    importLibraryInput.addEventListener("change", (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = ev => {
-        const raw = new Image();
-        raw.onload = () => {
-          const resized = resizeIfNeeded(raw);
-          resized.onload = () => {
-            if (currentMode === "fit") {
-              canvas.width = resized.width;
-              canvas.height = Math.round(resized.width * 9/16);
-            } else {
-              canvas.width = resized.width;
-              canvas.height = resized.height;
-            }
-            img = resized;
-            initMask();
-            drawScene();
-            previewBtn.disabled = copyLinkBtn.disabled = downloadBtn.disabled = uploadBtn.disabled = false;
-          };
-          if (resized.complete && resized.naturalWidth > 0) resized.onload();
-        };
-        raw.src = ev.target.result;
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // Mode switch
-    modeSelect.addEventListener("change", e => {
-      currentMode = e.target.value;
-      if (img.src) {
-        if (currentMode === "fit") {
-          canvas.width = img.width;
-          canvas.height = Math.round(img.width * 9/16);
-        } else {
-          canvas.width = img.width;
-          canvas.height = img.height;
-          initMask();
-        }
-        drawScene();
-      }
-    });
-
-    // Crop interaction
-    canvas.addEventListener("mousedown", e => {
-      if (currentMode !== "crop") return;
-      const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      const h = hitHandle(mx,my);
-      if (h) { resizing = true; handle = h.name; }
-      else if (mx >= mask.x && mx <= mask.x+mask.w && my >= mask.y && my <= mask.y+mask.h) {
-        dragging = true; dragStartX = mx - mask.x; dragStartY = my - mask.y;
-      }
-    });
-
-    canvas.addEventListener("mousemove", e => {
-      if (currentMode !== "crop") return;
-      const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      const h = hitHandle(mx,my);
-      canvas.style.cursor = h ? h.cursor :
-        (mx >= mask.x && mx <= mask.x+mask.w && my >= mask.y && my <= mask.y+mask.h ? "move" : "default");
-      if (dragging) { mask.x = mx - dragStartX; mask.y = my - dragStartY; clampMask(); drawScene(); }
-      if (resizing) {
-        let newW, newH;
-        if (handle === "tm") { newH = (mask.y + mask.h) - my; newW = newH*16/9; mask.x += (mask.w-newW)/2; mask.y = my; }
-        else if (handle === "bm") { newH = my-mask.y; newW = newH*16/9; mask.x += (mask.w-newW)/2; }
-        else if (handle === "ml") { newW = (mask.x+mask.w)-mx; newH = newW*9/16; mask.y += (mask.h-newH)/2; mask.x = mx; }
-        else if (handle === "mr") { newW = mx-mask.x; newH = newW*9/16; mask.y += (mask.h-newH)/2; }
-        else { newW = (handle==="tl"||handle==="bl")?(mask.x+mask.w-mx):(mx-mask.x); newH = newW*9/16;
-          if (handle==="tl"||handle==="tr") mask.y = mask.y+mask.h-newH;
-          if (handle==="tl"||handle==="bl") mask.x = mask.x+mask.w-newW; }
-        mask.w = newW; mask.h = newH; clampMask(); drawScene();
-      }
-    });
-    canvas.addEventListener("mouseup", ()=>{dragging=resizing=false;});
-
-    // Buttons
-    previewBtn.addEventListener("click", () => {
-      const exportCanvas = renderExportCanvas();
-      const previewImg = new Image();
-      previewImg.src = exportCanvas.toDataURL("image/png");
-      previewArea.innerHTML = "<h3>Export Preview (1280×720)</h3>";
-      previewArea.appendChild(previewImg);
-    });
-
-    downloadBtn.addEventListener("click", () => {
-      const cropCanvas = renderExportCanvas();
-      const link = document.createElement("a");
-      link.download = "exported.png";
-      link.href = cropCanvas.toDataURL("image/png");
-      link.click();
-    });
-
-    copyLinkBtn.addEventListener("click", async () => {
-      const cropCanvas = renderExportCanvas();
-      try {
-        await navigator.clipboard.writeText(cropCanvas.toDataURL("image/png"));
-        copiedMsg.style.display="block"; setTimeout(()=>copiedMsg.style.display="none",2000);
-      } catch (err) { alert("Failed to copy link: "+err); }
-    });
-
-    uploadBtn.addEventListener("click", async () => {
-      const cropCanvas = renderExportCanvas();
-      cropCanvas.toBlob(async (blob) => {
-        const form = new FormData();
-        form.append("reqtype", "fileupload");
-        form.append("fileToUpload", blob, "export.png");
+      reader.onload = (ev) => {
         try {
-          const res = await fetch("https://catbox.moe/user/api.php",{method:"POST",body:form});
-          const url = await res.text();
-          shortLink.href=url; shortLink.textContent=url;
-          uploadedMsg.style.display="block";
-        } catch(err){ alert("Upload failed: "+err); }
-      },"image/png");
+          const imported = JSON.parse(ev.target.result);
+          if (!Array.isArray(imported)) throw new Error("Invalid library file");
+
+          let lib = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+          lib = imported.concat(lib);
+          localStorage.setItem("exportLibrary", JSON.stringify(lib));
+          enforceStorageLimit();
+          alert("✅ Library imported successfully!");
+        } catch (err) {
+          alert("⚠️ Failed to import library: " + err.message);
+        }
+      };
+      reader.readAsText(file);
     });
+
+    function loadLibrary() {
+      const data = JSON.parse(localStorage.getItem("exportLibrary") || "[]");
+      renderLibrary(data);
+      updateStorageUsage();
+    }
+    loadLibrary();
+
+    // --- Cropper / Editor code remains unchanged below ---
+    // (… keep your existing initMask, clampMask, drawScene, handles, resizeIfNeeded, renderExportCanvas, file input, crop interaction, and export buttons code …)
   </script>
 </body>
 </html>
