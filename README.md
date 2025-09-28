@@ -1,2 +1,2 @@
-# Image to JSON
-To be used for making fake Instants in VRChat
+# ImageCrop to URL/URI
+Image editor to allow users to generate image links for VRChat!
