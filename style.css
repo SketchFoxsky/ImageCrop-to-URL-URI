@@ -1,0 +1,49 @@
+:root { color-scheme: dark; }
+body {
+  font-family: system-ui, sans-serif;
+  text-align: center;
+  background:#222; color:#eee;
+  margin: 0; padding: 24px 12px 60px;
+}
+h1 { margin: 0 0 16px; }
+canvas {
+  border:1px solid #444; display:block;
+  margin:12px auto; background:#000; cursor:default;
+}
+#controls {
+  margin-top: 12px;
+  display:flex; flex-wrap: wrap; justify-content: center; gap:8px;
+}
+button, select, input[type="file"] {
+  margin:0; padding:8px 12px;
+  border:1px solid #444;
+  background:#2a2a2a; color:#eee;
+  border-radius:6px; cursor:pointer;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+#warning { margin-top: 10px; color: #ffcc00; font-size: 14px; }
+#previewArea { margin-top: 20px; }
+#previewArea img {
+  border: 1px solid #555;
+  max-width: min(90vw, 640px);
+  height: auto; display: block; margin: 0 auto;
+}
+#copiedMsg {
+  margin-top: 8px; color: #66ff66; font-size: 14px; display: none;
+}
+h2 { margin-top: 36px; }
+#libraryWrap { max-width: 1000px; margin: 0 auto; text-align:left; }
+#libraryControls {
+  display:flex; flex-wrap:wrap; gap:8px;
+  align-items:center; margin-bottom:6px;
+}
+#storageUsage { font-size: 13px; margin: 4px 0 12px; color: #aaa; }
+#library { margin-top: 10px; }
+.lib-item {
+  display:flex; align-items:center; background:#333;
+  margin-bottom:10px; padding:8px; border-radius:6px; gap:10px;
+}
+.lib-item img { width: 120px; height:auto; border:1px solid #555; }
+.lib-info { flex:1; min-width:0; }
+.lib-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.warn { color:#ffcc00; font-size:12px; margin: 4px 0 0; }
